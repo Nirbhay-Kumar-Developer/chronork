@@ -1,0 +1,7 @@
+Package: chronork
+Version: 0.1.0
+Section: utils
+Priority: optional
+Architecture: aarch64
+Maintainer: Nirbhay Kumar <dev.nirbhaykumar@gmail.com>
+Description: A CLI tool for logging and analysing mistakes, achievements, ideas and learnings of everyday.
