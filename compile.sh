@@ -5,6 +5,8 @@ set -e
 PKG_NAME="chronork-aarch64"
 STORAGE_PATH="/storage/emulated/0/Programming/chronork"
 LOCAL_PATH="$HOME/chronork_tmp_build"
+PROFILE="$@"
+TARGET_BINARY="target/$PROFILE/chronork"
 
 # Clean start
 trap 'cp -r target "$STORAGE_PATH/" && rm -rf "$LOCAL_PATH"' EXIT 
@@ -15,9 +17,13 @@ mkdir -p "$LOCAL_PATH"
 cp -r "$STORAGE_PATH/." "$LOCAL_PATH/"
 cd "$LOCAL_PATH"
 
-# --- 2. Compile C++ Native Engine ---
-echo ">> Running Makefile..."
-cargo build
+# --- 2. Compile Rust ---
+echo ">> Running Cargo..."
+if [ "$PROFILE" = "release" ]; then
+    cargo build --release
+else
+    cargo build
+fi
 
 # --- 4. Package Assembly ---
 echo ">> Assembling Debian Package..."
@@ -29,9 +35,9 @@ BIN_DEST="$PREFIX_PATH/bin"
 
 mkdir -p "$BIN_DEST"
 
-strip build/chronork
+strip "$TARGET_BINARY"
 # A. Copy Primary Binary to /usr/bin
-cp build/chronork "$BIN_DEST/"
+cp "$TARGET_BINARY" "$BIN_DEST/"
 
 # --- 5. Permissions & Build ---
 echo ">> Setting Permissions..."
@@ -52,7 +58,7 @@ echo ">> Installing locally..."
 dpkg --install chronork-aarch64.deb
 # Copy the finished .deb back to your Programming folder
 cp "${PKG_NAME}.deb" "$STORAGE_PATH/"
-cp "target" "$STORAGE_PATH"
+cp "$TARGET_BINARY" "$STORAGE_PATH/build/$PROFILE/"
 
 echo "🚀 Success!"
-echo "Binary: $PREFIX/usr/bin/chronork"
+echo "Binary: $PREFIX/bin/chronork"

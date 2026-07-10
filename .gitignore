@@ -2,3 +2,5 @@ bundle.cpp
 bundle.sh
 .nomedia
 chronork-bundle.cpp
+target
+chronork-bundle.rs
