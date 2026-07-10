@@ -7,7 +7,7 @@ STORAGE_PATH="/storage/emulated/0/Programming/chronork"
 LOCAL_PATH="$HOME/chronork_tmp_build"
 
 # Clean start
-trap 'rm -rf "$LOCAL_PATH"' EXIT 
+trap 'cp -r target "$STORAGE_PATH/" && rm -rf "$LOCAL_PATH"' EXIT 
 
 # --- 0. Sync to Local (Faster I/O) ---
 echo ">> Syncing to local storage..."
@@ -17,8 +17,7 @@ cd "$LOCAL_PATH"
 
 # --- 2. Compile C++ Native Engine ---
 echo ">> Running Makefile..."
-make clean
-make -j$(nproc)
+cargo build
 
 # --- 4. Package Assembly ---
 echo ">> Assembling Debian Package..."
@@ -53,7 +52,7 @@ echo ">> Installing locally..."
 dpkg --install chronork-aarch64.deb
 # Copy the finished .deb back to your Programming folder
 cp "${PKG_NAME}.deb" "$STORAGE_PATH/"
-cp "build/chronork" "$STORAGE_PATH/build/"
+cp "target" "$STORAGE_PATH"
 
 echo "🚀 Success!"
 echo "Binary: $PREFIX/usr/bin/chronork"
