@@ -1,7 +1,4 @@
-use chrono::Local;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-// --- ANSI Color Codes for Termux ---
+// --- ANSI Color Codes for Termux/Linux Console ---
 pub const RESET: &str = "\x1b[0m";
 pub const BOLD: &str = "\x1b[1m";
 pub const RED: &str = "\x1b[31m";
@@ -10,7 +7,7 @@ pub const YELLOW: &str = "\x1b[33m";
 pub const BLUE: &str = "\x1b[34m";
 pub const CYAN: &str = "\x1b[36m";
 
-// Returns a color based on the category string
+// Returns a color based on the category string for human console layout
 pub fn get_color(category: &str) -> &'static str {
     match category {
         "Mistake" => RED,
@@ -19,30 +16,6 @@ pub fn get_color(category: &str) -> &'static str {
         "Idea" => CYAN,
         _ => RESET,
     }
-}
-
-// --- Date, Time, and ID Helpers ---
-
-// Returns exact 64-bit UNIX epoch timestamp (seconds since 1970)
-pub fn get_current_timestamp() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
-}
-
-// Generates a simple, robust unique ID based on the timestamp (e.g., "a_1720524000")
-pub fn generate_id(prefix: &str) -> String {
-    format!("{}_{}", prefix, get_current_timestamp())
-}
-
-// Returns today's date strictly as "YYYY-MM-DD" for filesystem sorting
-pub fn get_today_date() -> String {
-    Local::now().format("%Y-%m-%d").to_string()
-}
-
-pub fn get_current_year() -> String {
-    Local::now().format("%Y").to_string()
 }
 
 // --- CLI Help Menu ---
