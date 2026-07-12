@@ -10,6 +10,14 @@ pub struct LogEntry {
     pub tags: Vec<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct QueryFilter {
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+    pub categories: Vec<String>,
+    pub tags: Vec<String>,
+}
+
 impl LogEntry {
     /// Built-in integrity check to prevent writing corrupt states
     pub fn is_valid(&self) -> bool {

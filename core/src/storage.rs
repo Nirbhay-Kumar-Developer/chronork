@@ -4,7 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use crate::ChronorkError;
-use crate::models::{DailyLog, LogCategories, Metadata};
+use crate::models::{DailyLog, LogCategories, Metadata, QueryFilter};
 
 pub struct StorageManager {
     base_path: PathBuf,
@@ -92,12 +92,10 @@ impl StorageManager {
         }
 
         // 3. Write to a temporary file
-        // A block is used here to ensure the File handle goes out of scope and closes automatically.
         {
             let mut tmp_file = File::create(tmp_path)
                 .map_err(|e| ChronorkError::FileSystem(format!("Failed to create temporary write file {}: {}", tmp_path.display(), e)))?;
 
-            // 4 spaces for readability
             let json_string = serde_json::to_string_pretty(log)
                 .map_err(ChronorkError::Serialization)?;
 
@@ -107,16 +105,125 @@ impl StorageManager {
             // 4. Force OS to flush buffer to physical disk
             tmp_file.sync_all()
                 .map_err(|e| ChronorkError::FileSystem(format!("Failed to force flush to disk: {}", e)))?;
-        } // File closes here securely.
+        } 
 
         // 5. Secure the temp file before making it live
         Self::secure_file_permissions(tmp_path)?;
 
         // 6. Atomic swap: Overwrite the old file seamlessly
-        // If power fails exactly here, the old file remains perfectly intact.
         fs::rename(tmp_path, target_path)
             .map_err(|e| ChronorkError::FileSystem(format!("Atomic swap failed: {}", e)))?;
 
         Ok(())
+    }
+
+    /// Recursively scans directories to retrieve logs within a date range, applying central filters.
+    pub fn scan_range(&self, filter: &QueryFilter) -> Result<Vec<DailyLog>, ChronorkError> {
+        let mut results = Vec::new();
+
+        // Normalize filters for case-insensitive matching
+        let target_cats: Vec<String> = filter.categories.iter().map(|c| c.to_lowercase()).collect();
+        let target_tags: Vec<String> = filter.tags.iter().map(|t| t.to_lowercase()).collect();
+
+        let year_dirs = match fs::read_dir(&self.base_path) {
+            Ok(dirs) => dirs,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(results),
+            Err(e) => return Err(ChronorkError::FileSystem(format!("Failed to read base path: {}", e))),
+        };
+
+        // Traverse Years (Pruning irrelevant directories to optimize I/O)
+        for year_entry in year_dirs.flatten() {
+            let year_path = year_entry.path();
+            if !year_path.is_dir() { continue; }
+            
+            let year_str = year_entry.file_name().to_string_lossy().to_string();
+
+            // Lexicographical bounds checking for YYYY
+            if let Some(start) = &filter.start_date {
+                if let Some(sy) = start.get(0..4) { if year_str.as_str() < sy { continue; } }
+            }
+            if let Some(end) = &filter.end_date {
+                if let Some(ey) = end.get(0..4) { if year_str.as_str() > ey { continue; } }
+            }
+
+            let month_dirs = match fs::read_dir(&year_path) {
+                Ok(dirs) => dirs,
+                Err(_) => continue,
+            };
+
+            // Traverse Months (Pruning irrelevant directories)
+            for month_entry in month_dirs.flatten() {
+                let month_path = month_entry.path();
+                if !month_path.is_dir() { continue; }
+                
+                let month_str = month_entry.file_name().to_string_lossy().to_string();
+                let ym_str = format!("{}-{}", year_str, month_str);
+
+                // Lexicographical bounds checking for YYYY-MM
+                if let Some(start) = &filter.start_date {
+                    if let Some(sym) = start.get(0..7) { if ym_str.as_str() < sym { continue; } }
+                }
+                if let Some(end) = &filter.end_date {
+                    if let Some(eym) = end.get(0..7) { if ym_str.as_str() > eym { continue; } }
+                }
+
+                let file_entries = match fs::read_dir(&month_path) {
+                    Ok(files) => files,
+                    Err(_) => continue,
+                };
+
+                // Traverse Files (Exact Date Check & Filtering)
+                for file_entry in file_entries.flatten() {
+                    let file_path = file_entry.path();
+                    if !file_path.is_file() || file_path.extension().unwrap_or_default() != "json" {
+                        continue;
+                    }
+
+                    let date_str = file_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+
+                    // Lexicographical bounds checking for YYYY-MM-DD
+                    if let Some(start) = &filter.start_date { if date_str < *start { continue; } }
+                    if let Some(end) = &filter.end_date { if date_str > *end { continue; } }
+
+                    // Load file and apply node filtering
+                    if let Ok(mut log) = self.load(&date_str) {
+                        if log.metadata.updated_at == 0 { continue; }
+
+                        // 1. Category Filtering
+                        if !target_cats.is_empty() {
+                            if !target_cats.contains(&"achievements".to_string()) { log.logs.achievements.clear(); }
+                            if !target_cats.contains(&"learnings".to_string()) { log.logs.learnings.clear(); }
+                            if !target_cats.contains(&"mistakes".to_string()) { log.logs.mistakes.clear(); }
+                            if !target_cats.contains(&"ideas".to_string()) { log.logs.ideas.clear(); }
+                        }
+
+                        // 2. Tag Filtering (In-place retention)
+                        if !target_tags.is_empty() {
+                            let tag_match = |entry: &crate::models::LogEntry| -> bool {
+                                entry.tags.iter().any(|t| target_tags.contains(&t.to_lowercase()))
+                            };
+                            
+                            log.logs.achievements.retain(tag_match);
+                            log.logs.learnings.retain(tag_match);
+                            log.logs.mistakes.retain(tag_match);
+                            log.logs.ideas.retain(tag_match);
+                        }
+
+                        // 3. Drop empty days
+                        if !log.logs.achievements.is_empty() 
+                            || !log.logs.learnings.is_empty() 
+                            || !log.logs.mistakes.is_empty() 
+                            || !log.logs.ideas.is_empty() {
+                            results.push(log);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Enforce strict chronological order before returning to environment wrappers
+        results.sort_by(|a, b| a.metadata.date.cmp(&b.metadata.date));
+        
+        Ok(results)
     }
 }

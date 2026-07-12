@@ -1,11 +1,15 @@
 [package]
-name = "chronork_jni"
+name = "chronork-jni"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
+name = "chronork"
 crate-type = ["cdylib"]
 
 [dependencies]
+# Depend exclusively on the core storage engine and JNI system bindings
 chronork-core = { path = "../core" }
-jni = "0.21.1"
+jni = { version = "0.21.1", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

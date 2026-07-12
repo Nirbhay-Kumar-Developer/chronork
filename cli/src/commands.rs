@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 
-use chronork_core::models::LogEntry;
+use chronork_core::models::{LogEntry, QueryFilter};
 use chronork_core::storage::StorageManager;
 use chronork_core::utils as core_utils;
 use crate::utils as cli_utils;
@@ -14,7 +14,6 @@ pub fn parse_input(raw_input: &str) -> (String, Vec<String>) {
     let mut current_token = String::new();
     let mut in_quotes = false;
 
-    // Tokenize
     for c in raw_input.chars() {
         if c == '"' {
             in_quotes = !in_quotes;
@@ -32,10 +31,8 @@ pub fn parse_input(raw_input: &str) -> (String, Vec<String>) {
         tokens.push(current_token);
     }
 
-    // Process tokens
     for token in tokens {
         let hash_pos = token.find('#');
-        
         let is_tag = match hash_pos {
             Some(0) => true,
             Some(1) => token.chars().next().map_or(false, |c| c.is_ascii_punctuation()),
@@ -44,11 +41,9 @@ pub fn parse_input(raw_input: &str) -> (String, Vec<String>) {
 
         if is_tag {
             let mut tag = token[hash_pos.unwrap() + 1..].to_string();
-            
             while tag.ends_with(|c: char| c.is_ascii_punctuation()) {
                 tag.pop();
             }
-            
             if !tag.is_empty() {
                 tags.push(tag);
             }
@@ -64,32 +59,15 @@ pub fn parse_input(raw_input: &str) -> (String, Vec<String>) {
     (content_parts.join(" "), tags)
 }
 
-fn print_category(
-    date: &str,
-    category_name: &str,
-    entries: &[LogEntry],
-    target_tags: &[String],
-) {
+/// Standard Terminal Formatter (ANSI Colors, Space Padding)
+fn print_category(date: &str, category_name: &str, entries: &[LogEntry]) {
+    if entries.is_empty() {
+        return;
+    }
     let color = cli_utils::get_color(category_name);
     
     for entry in entries {
-        let mut match_found = target_tags.is_empty();
-        
-        if !match_found {
-            for target in target_tags {
-                if entry.tags.iter().any(|tag| tag == target) {
-                    match_found = true;
-                    break;
-                }
-            }
-        }
-
-        if !match_found {
-            continue;
-        }
-
         print!("[{}] {}{:<12}{}: {}", date, color, category_name, cli_utils::RESET, entry.content);
-        
         print!("{} [", cli_utils::BLUE);
         for (i, tag) in entry.tags.iter().enumerate() {
             print!("#{}", tag);
@@ -101,6 +79,27 @@ fn print_category(
     }
 }
 
+/// AI Context Formatter (Strict Markdown, Sanitized Strings)
+fn print_markdown_category(category_name: &str, entries: &[LogEntry]) {
+    if entries.is_empty() {
+        return;
+    }
+    println!("### {}", category_name);
+    
+    for entry in entries {
+        // Sanitize newlines to maintain clean bullet structures
+        let sanitized = entry.content.replace('\n', " ").trim().to_string();
+        
+        let tag_str = if entry.tags.is_empty() {
+            "none".to_string()
+        } else {
+            entry.tags.join(", ")
+        };
+        
+        println!("- {} [Tags: {}]", sanitized, tag_str);
+    }
+}
+
 // --- DUMP COMMAND ---
 pub fn handle_dump(args: &[String], storage: &StorageManager) {
     let mut y = String::new();
@@ -109,12 +108,17 @@ pub fn handle_dump(args: &[String], storage: &StorageManager) {
     let mut f = Vec::new();
     let mut t = Vec::new();
     let mut mode = "";
+    let mut use_markdown = false;
 
     // State Machine Argument Parser
     for arg in args {
         match arg.as_str() {
             "-y" | "-m" | "-d" | "-f" | "-t" => {
                 mode = arg;
+                continue;
+            }
+            "--markdown" | "-md" => {
+                use_markdown = true;
                 continue;
             }
             _ => {}
@@ -144,79 +148,70 @@ pub fn handle_dump(args: &[String], storage: &StorageManager) {
             eprintln!("{}Error: Month must be 1 or 2 digits.{}", cli_utils::RED, cli_utils::RESET);
             return;
         }
-        // Normalize to two digits ("7" -> "07")
         m = format!("{:02}", sanitized_m.parse::<u8>().unwrap_or(1));
     }
 
-    // Determine which categories to show
-    let mut show_a = false;
-    let mut show_l = false;
-    let mut show_m = false;
-    let mut show_i = false;
-
-    if f.is_empty() {
-        show_a = true; show_l = true; show_m = true; show_i = true;
-    } else {
-        for cat in &f {
-            if let Some(c) = cat.chars().next().map(|ch| ch.to_ascii_lowercase()) {
-                match c {
-                    'a' => show_a = true,
-                    'l' => show_l = true,
-                    'm' => show_m = true,
-                    'i' => show_i = true,
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    // Delegate directory traversal logic entirely to the Storage Manager by generating the requested dates.
-    let mut dates_to_process = Vec::new();
+    // Construct unified QueryFilter for the Core Engine
+    let mut start_date = None;
+    let mut end_date = None;
     let time_filter_applied = !y.is_empty() || !m.is_empty() || !d.is_empty();
 
     if !time_filter_applied {
-        dates_to_process.push(core_utils::get_today_date());
+        let today = core_utils::get_today_date();
+        start_date = Some(today.clone());
+        end_date = Some(today);
     } else if !d.is_empty() {
-        // Sanitize exact date input length before pushing
         if d.len() == 10 {
-            dates_to_process.push(d);
+            start_date = Some(d.clone());
+            end_date = Some(d);
         }
     } else {
-        let target_year = if y.is_empty() { core_utils::get_current_year() } else { y };
-        let months = if m.is_empty() { 1..=12 } else { m.parse::<u8>().unwrap()..=m.parse::<u8>().unwrap() };
+        let target_year = if y.is_empty() { core_utils::get_current_year() } else { y.clone() };
+        let start_m = if m.is_empty() { "01".to_string() } else { m.clone() };
+        let end_m = if m.is_empty() { "12".to_string() } else { m.clone() };
         
-        for month in months {
-            for day in 1..=31 {
-                dates_to_process.push(format!("{}-{:02}-{:02}", target_year, month, day));
-            }
-        }
+        start_date = Some(format!("{}-{}-01", target_year, start_m));
+        // Day 31 safely encompasses all months for lexicographical boundaries
+        end_date = Some(format!("{}-{}-31", target_year, end_m)); 
     }
 
-    // Execute Output via Core Storage Engine
-    for date in dates_to_process {
-        match storage.load(&date) {
-            Ok(log) => {
-                if log.metadata.updated_at == 0 {
-                    continue; // Skip silently; file does not exist
-                }
+    let filter = QueryFilter {
+        start_date,
+        end_date,
+        categories: f,
+        tags: t,
+    };
 
-                if show_a && !log.logs.achievements.is_empty() {
-                    print_category(&date, "Achievement", &log.logs.achievements, &t);
-                }
-                if show_l && !log.logs.learnings.is_empty() {
-                    print_category(&date, "Learning", &log.logs.learnings, &t);
-                }
-                if show_m && !log.logs.mistakes.is_empty() {
-                    print_category(&date, "Mistake", &log.logs.mistakes, &t);
-                }
-                if show_i && !log.logs.ideas.is_empty() {
-                    print_category(&date, "Idea", &log.logs.ideas, &t);
-                }
+    // Execute query via Core Indexing Engine
+    match storage.scan_range(&filter) {
+        Ok(logs) => {
+            if logs.is_empty() {
+                println!("{}No logs found matching your criteria.{}", cli_utils::YELLOW, cli_utils::RESET);
+                return;
             }
-            Err(e) => {
-                eprintln!("{}Error reading log for {}: {}{}", cli_utils::RED, date, e, cli_utils::RESET);
+
+            if use_markdown {
+                println!("# Chronork Data Export for AI Analysis\n");
+            }
+
+            for log in logs {
+                if use_markdown {
+                    println!("## Date: {}", log.metadata.date);
+                    print_markdown_category("Achievements", &log.logs.achievements);
+                    print_markdown_category("Learnings", &log.logs.learnings);
+                    print_markdown_category("Mistakes", &log.logs.mistakes);
+                    print_markdown_category("Ideas", &log.logs.ideas);
+                    println!("\n{}\n", "-".repeat(40));
+                } else {
+                    // Because scan_range handles filtering internally, we safely pass empty arrays
+                    print_category(&log.metadata.date, "Achievement", &log.logs.achievements);
+                    print_category(&log.metadata.date, "Learning", &log.logs.learnings);
+                    print_category(&log.metadata.date, "Mistake", &log.logs.mistakes);
+                    print_category(&log.metadata.date, "Idea", &log.logs.ideas);
+                }
             }
         }
+        Err(e) => eprintln!("{}Database Error: {}{}", cli_utils::RED, e, cli_utils::RESET),
     }
 }
 
@@ -270,13 +265,12 @@ pub fn handle_store(args: &[String], storage: &StorageManager) {
                 
                 let mut input = String::new();
                 
-                // Graceful Panic Handling for EOF (Ctrl+D)
                 match io::stdin().read_line(&mut input) {
                     Ok(0) => {
                         println!("\n{}EOF detected. Exiting input sequence...{}", cli_utils::YELLOW, cli_utils::RESET);
                         break 'interactive;
                     }
-                    Ok(_) => {} // Continue processing input
+                    Ok(_) => {} 
                     Err(e) => {
                         eprintln!("{}Input error: {}{}", cli_utils::RED, e, cli_utils::RESET);
                         break 'interactive;

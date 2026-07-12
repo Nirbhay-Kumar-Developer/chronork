@@ -1,7 +1,11 @@
 [package]
-name = "chronork"
+name = "chronork-cli"
 version = "0.1.0"
 edition = "2021"
+
+[[bin]]
+name = "chronork"
+path = "src/main.rs"
 
 [dependencies]
 chronork-core = { path = "../core" }
