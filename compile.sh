@@ -53,7 +53,13 @@ if [ "$BUILD_JNI" = true ]; then
     if [ -f "$JNI_BINARY" ]; then
         mkdir -p "$STORAGE_PATH/lib/arm64-v8a"
         cp "$JNI_BINARY" "$STORAGE_PATH/lib/arm64-v8a/"
+        cp "$JNI_BINARY" "$PREFIX/lib/"
         echo ">> 🚀 JNI Success! Exported library -> $STORAGE_PATH/lib/arm64-v8a/libchronork.so"
+        echo ">> Building Android App"
+        cd android
+        mkapk build
+        cd ..
+        echo ">> Built Android App."
     else
         echo ">> Error: JNI compilation reported success but library object was not found."
         exit 1

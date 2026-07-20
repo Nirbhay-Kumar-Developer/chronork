@@ -8,7 +8,7 @@ use chronork_core::storage::StorageManager;
 
 /// Retrieves a log for a specific date and returns it to Java as a serialized JSON string.
 #[no_mangle]
-pub extern "system" fn Java_com_chronork_getLog<'local>(
+pub extern "system" fn Java_com_chronork_lib_getLog<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     app_files_dir: JString<'local>,
@@ -39,7 +39,7 @@ pub extern "system" fn Java_com_chronork_getLog<'local>(
 
 /// Consumes a JSON string from Java, deserializes it into a Rust struct, and saves it to disk safely.
 #[no_mangle]
-pub extern "system" fn Java_com_chronork_storeLog<'local>(
+pub extern "system" fn Java_com_chronork_lib_storeLog<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     app_files_dir: JString<'local>,
@@ -74,7 +74,7 @@ pub extern "system" fn Java_com_chronork_storeLog<'local>(
 /// Consumes a JSON string from Java representing a QueryFilter, scans the filesystem,
 /// and returns a JSON array of matching DailyLogs.
 #[no_mangle]
-pub extern "system" fn Java_com_chronork_queryLogs<'local>(
+pub extern "system" fn Java_com_chronork_lib_queryLogs<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     app_files_dir: JString<'local>,

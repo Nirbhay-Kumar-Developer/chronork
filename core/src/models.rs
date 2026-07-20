@@ -21,7 +21,28 @@ pub struct QueryFilter {
 impl LogEntry {
     /// Built-in integrity check to prevent writing corrupt states
     pub fn is_valid(&self) -> bool {
-        !self.id.is_empty() && self.timestamp > 0 && !self.content.is_empty()
+        // 1. Core strings cannot be empty
+        if self.id.is_empty() || self.content.is_empty() {
+            return false;
+        }
+
+        // 2. Enforce a realistic Unix epoch second window (Year 2000 to Year 2100)
+        if self.timestamp < 946684800 || self.timestamp > 4102444800 {
+            return false;
+        }
+
+        // 3. Strict schema validation for the unique ID: `{prefix}_{digits}`
+        let id_bytes = self.id.as_bytes();
+        if let Some(underscore_pos) = id_bytes.iter().position(|&b| b == b'_') {
+            // The separator cannot be the first or last character
+            if underscore_pos == 0 || underscore_pos == id_bytes.len() - 1 {
+                return false;
+            }
+            // Verify all trailing characters after the prefix separator are numeric ticks
+            id_bytes[underscore_pos + 1..].iter().all(|b| b.is_ascii_digit())
+        } else {
+            false
+        }
     }
 }
 
@@ -48,32 +69,31 @@ pub struct DailyLog {
 impl DailyLog {
     /// Helper to validate the entire daily log before serialization
     pub fn is_valid(&self) -> bool {
-        if self.metadata.date.is_empty() || self.metadata.updated_at <= 0 {
+        // 1. Validate exact YYYY-MM-DD schema string constraints to secure database layouts
+        if self.metadata.date.len() != 10 {
+            return false;
+        }
+        
+        let date_bytes = self.metadata.date.as_bytes();
+        let is_valid_date_format = date_bytes[0..4].iter().all(|c| c.is_ascii_digit())
+            && date_bytes[4] == b'-'
+            && date_bytes[5..7].iter().all(|c| c.is_ascii_digit())
+            && date_bytes[7] == b'-'
+            && date_bytes[8..10].iter().all(|c| c.is_ascii_digit());
+
+        if !is_valid_date_format {
             return false;
         }
 
-        // Validate all categories
-        for entry in &self.logs.achievements {
-            if !entry.is_valid() {
-                return false;
-            }
-        }
-        for entry in &self.logs.mistakes {
-            if !entry.is_valid() {
-                return false;
-            }
-        }
-        for entry in &self.logs.learnings {
-            if !entry.is_valid() {
-                return false;
-            }
-        }
-        for entry in &self.logs.ideas {
-            if !entry.is_valid() {
-                return false;
-            }
+        // 2. Enforce a realistic Unix epoch second window for the modification marker (Year 2000 to Year 2100)
+        if self.metadata.updated_at < 946684800 || self.metadata.updated_at > 4102444800 {
+            return false;
         }
 
-        true
+        // 3. Deep validation tracking across all category records
+        self.logs.achievements.iter().all(|entry| entry.is_valid())
+            && self.logs.mistakes.iter().all(|entry| entry.is_valid())
+            && self.logs.learnings.iter().all(|entry| entry.is_valid())
+            && self.logs.ideas.iter().all(|entry| entry.is_valid())
     }
 }

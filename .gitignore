@@ -1,8 +1,9 @@
 bundle.cpp
 bundle.sh
 .nomedia
-chronork-bundle.cpp
 target
-chronork-bundle.rs
+bundle.rs
 to-do.txt
 Cargo.lock
+android/bin
+

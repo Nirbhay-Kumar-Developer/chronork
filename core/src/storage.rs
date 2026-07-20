@@ -19,10 +19,24 @@ impl StorageManager {
 
     // Constructs the exact file path based on the YYYY-MM-DD date string
     fn resolve_file_path(&self, date_str: &str) -> Result<PathBuf, ChronorkError> {
-        // Enforce length and ASCII boundaries to prevent byte-slice panics
-        if date_str.len() < 10 || !date_str.is_ascii() {
+        // Enforce strict length to prevent out-of-bounds slicing and path traversal
+        if date_str.len() != 10 {
             return Err(ChronorkError::Validation(
-                "Date string must be valid ASCII in YYYY-MM-DD format.".to_string(),
+                "Date string must be exactly 10 characters long (YYYY-MM-DD).".to_string(),
+            ));
+        }
+
+        // Strict byte-level pattern validation to sanitize entry points
+        let bytes = date_str.as_bytes();
+        let is_valid_format = bytes[0..4].iter().all(|c| c.is_ascii_digit())
+            && bytes[4] == b'-'
+            && bytes[5..7].iter().all(|c| c.is_ascii_digit())
+            && bytes[7] == b'-'
+            && bytes[8..10].iter().all(|c| c.is_ascii_digit());
+
+        if !is_valid_format {
+            return Err(ChronorkError::Validation(
+                "Date string must strictly follow the YYYY-MM-DD numerical format.".to_string(),
             ));
         }
 
@@ -82,8 +96,9 @@ impl StorageManager {
         }
 
         let target_path = self.resolve_file_path(&log.metadata.date)?;
-        let tmp_path_str = format!("{}.tmp", target_path.display());
-        let tmp_path = Path::new(&tmp_path_str);
+        
+        // FIX: Prevent lossy path string encoding mutations via native PathBuf extensions
+        let tmp_path = target_path.with_extension("json.tmp");
 
         // 2. Ensure parent directories exist
         if let Some(parent) = target_path.parent() {
@@ -93,7 +108,7 @@ impl StorageManager {
 
         // 3. Write to a temporary file
         {
-            let mut tmp_file = File::create(tmp_path)
+            let mut tmp_file = File::create(&tmp_path)
                 .map_err(|e| ChronorkError::FileSystem(format!("Failed to create temporary write file {}: {}", tmp_path.display(), e)))?;
 
             let json_string = serde_json::to_string_pretty(log)
@@ -108,10 +123,10 @@ impl StorageManager {
         } 
 
         // 5. Secure the temp file before making it live
-        Self::secure_file_permissions(tmp_path)?;
+        Self::secure_file_permissions(&tmp_path)?;
 
         // 6. Atomic swap: Overwrite the old file seamlessly
-        fs::rename(tmp_path, target_path)
+        fs::rename(&tmp_path, target_path)
             .map_err(|e| ChronorkError::FileSystem(format!("Atomic swap failed: {}", e)))?;
 
         Ok(())
@@ -138,12 +153,18 @@ impl StorageManager {
             
             let year_str = year_entry.file_name().to_string_lossy().to_string();
 
-            // Lexicographical bounds checking for YYYY
+            // FIX: Enforce bounds check validation on YYYY boundaries instead of ignoring errors silently
             if let Some(start) = &filter.start_date {
-                if let Some(sy) = start.get(0..4) { if year_str.as_str() < sy { continue; } }
+                let sy = start.get(0..4).ok_or_else(|| {
+                    ChronorkError::Validation("Filter start_date is too short for year parsing validation.".to_string())
+                })?;
+                if year_str.as_str() < sy { continue; }
             }
             if let Some(end) = &filter.end_date {
-                if let Some(ey) = end.get(0..4) { if year_str.as_str() > ey { continue; } }
+                let ey = end.get(0..4).ok_or_else(|| {
+                    ChronorkError::Validation("Filter end_date is too short for year parsing validation.".to_string())
+                })?;
+                if year_str.as_str() > ey { continue; }
             }
 
             let month_dirs = match fs::read_dir(&year_path) {
@@ -159,12 +180,18 @@ impl StorageManager {
                 let month_str = month_entry.file_name().to_string_lossy().to_string();
                 let ym_str = format!("{}-{}", year_str, month_str);
 
-                // Lexicographical bounds checking for YYYY-MM
+                // FIX: Enforce bounds check validation on YYYY-MM boundaries instead of ignoring errors silently
                 if let Some(start) = &filter.start_date {
-                    if let Some(sym) = start.get(0..7) { if ym_str.as_str() < sym { continue; } }
+                    let sym = start.get(0..7).ok_or_else(|| {
+                        ChronorkError::Validation("Filter start_date is too short for month parsing validation.".to_string())
+                    })?;
+                    if ym_str.as_str() < sym { continue; }
                 }
                 if let Some(end) = &filter.end_date {
-                    if let Some(eym) = end.get(0..7) { if ym_str.as_str() > eym { continue; } }
+                    let eym = end.get(0..7).ok_or_else(|| {
+                        ChronorkError::Validation("Filter end_date is too short for month parsing validation.".to_string())
+                    })?;
+                    if ym_str.as_str() > eym { continue; }
                 }
 
                 let file_entries = match fs::read_dir(&month_path) {

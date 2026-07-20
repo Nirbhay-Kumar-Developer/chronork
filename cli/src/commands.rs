@@ -39,13 +39,20 @@ pub fn parse_input(raw_input: &str) -> (String, Vec<String>) {
             _ => false,
         };
 
+        // PATCH: Removed hash_pos.unwrap() and fixed unsafe multi-byte byte slicing panic
         if is_tag {
-            let mut tag = token[hash_pos.unwrap() + 1..].to_string();
-            while tag.ends_with(|c: char| c.is_ascii_punctuation()) {
-                tag.pop();
-            }
-            if !tag.is_empty() {
-                tags.push(tag);
+            if let Some(pos) = hash_pos {
+                let mut tag = String::new();
+                // Safely skip past the '#' index character-by-character to preserve valid UTF-8 structures
+                for c in token.chars().skip(pos + 1) {
+                    tag.push(c);
+                }
+                while tag.ends_with(|c: char| c.is_ascii_punctuation()) {
+                    tag.pop();
+                }
+                if !tag.is_empty() {
+                    tags.push(tag);
+                }
             }
         } else {
             content_parts.push(token);
@@ -148,7 +155,17 @@ pub fn handle_dump(args: &[String], storage: &StorageManager) {
             eprintln!("{}Error: Month must be 1 or 2 digits.{}", cli_utils::RED, cli_utils::RESET);
             return;
         }
-        m = format!("{:02}", sanitized_m.parse::<u8>().unwrap_or(1));
+        
+        // PATCH: Removed unwrap_or(1) parsing step, replaced with strict 01-12 value verification logic
+        match sanitized_m.parse::<u8>() {
+            Ok(val) if (1..=12).contains(&val) => {
+                m = format!("{:02}", val);
+            }
+            _ => {
+                eprintln!("{}Error: Invalid month value (must be between 01 and 12).{}", cli_utils::RED, cli_utils::RESET);
+                return;
+            }
+        }
     }
 
     // Construct unified QueryFilter for the Core Engine
@@ -170,9 +187,14 @@ pub fn handle_dump(args: &[String], storage: &StorageManager) {
         let start_m = if m.is_empty() { "01".to_string() } else { m.clone() };
         let end_m = if m.is_empty() { "12".to_string() } else { m.clone() };
         
+        let year_num: i32 = target_year.parse().unwrap_or(2026);
+        let month_num: u32 = end_m.parse().unwrap_or(12);
+
+        // FIX: Replaced direct chrono calls with the core utility helper to avoid external unlinked dependency errors
+        let last_day = core_utils::get_last_day_of_month(year_num, month_num);
+
         start_date = Some(format!("{}-{}-01", target_year, start_m));
-        // Day 31 safely encompasses all months for lexicographical boundaries
-        end_date = Some(format!("{}-{}-31", target_year, end_m)); 
+        end_date = Some(format!("{}-{}-{:02}", target_year, end_m, last_day)); 
     }
 
     let filter = QueryFilter {
@@ -203,7 +225,6 @@ pub fn handle_dump(args: &[String], storage: &StorageManager) {
                     print_markdown_category("Ideas", &log.logs.ideas);
                     println!("\n{}\n", "-".repeat(40));
                 } else {
-                    // Because scan_range handles filtering internally, we safely pass empty arrays
                     print_category(&log.metadata.date, "Achievement", &log.logs.achievements);
                     print_category(&log.metadata.date, "Learning", &log.logs.learnings);
                     print_category(&log.metadata.date, "Mistake", &log.logs.mistakes);
